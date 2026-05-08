@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>영어 12달 스펠링</title>
+
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script src="./config.js"></script>
+  <script src="./tts.js"></script>
+  <script src="./sfx.js"></script>
+  <script src="./recorder.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif; background: linear-gradient(180deg, #f0f9ff 0%, #e0e7ff 100%); }
+    @keyframes pop { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+    @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+    .pop { animation: pop 0.3s ease-out; }
+    .shake { animation: shake 0.4s; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef, useMemo } = React;
+    const sfx = window.GameSFX;
+
+    function useIsMobile(breakpoint = 640) {
+      const [m, setM] = useState(() => window.innerWidth < breakpoint);
+      useEffect(() => {
+        const r = () => setM(window.innerWidth < breakpoint);
+        window.addEventListener('resize', r);
+        return () => window.removeEventListener('resize', r);
+      }, [breakpoint]);
+      return m;
+    }
+
+    // 이름 입력 → 게임 → 기록 전송 래퍼
+    function GameShell({ children }) {
+      const [player, setPlayer] = useState('');
+      const [started, setStarted] = useState(false);
+      const startTimeRef = useRef(null);
+
+      const onStart = () => { sfx.click(); startTimeRef.current = Date.now(); setStarted(true); };
+
+      const submit = (payload) => {
+        const duration = startTimeRef.current ? Math.round((Date.now() - startTimeRef.current) / 1000) : null;
+        return window.GameRecorder.submit({ player, duration_sec: duration, ...payload });
+      };
+
+      if (!started) {
+        return (
+          <div style={{ maxWidth: 480, margin: '40px auto', padding: 28, background: 'white', borderRadius: 24, boxShadow: '0 10px 30px rgba(0,0,0,0.08)', textAlign: 'center' }}>
+            <div style={{ fontSize: '2.5em', marginBottom: 8 }}>📅</div>
+            <h1 style={{ fontSize: '1.5em', fontWeight: 800, marginBottom: 8 }}>{window.GAME_CONFIG.title}</h1>
+            <p style={{ color: '#64748b', marginBottom: 18, fontSize: '0.95em' }}>
+              1월부터 12월까지, 무작위 순서로 12문제!
+            </p>
+            <input
+              value={player}
+              onChange={(e) => setPlayer(e.target.value)}
+              placeholder="이름을 적어주세요"
+              onKeyDown={(e) => { if (e.key === 'Enter' && player.trim()) onStart(); }}
+              style={{ width: '100%', padding: '14px 16px', border: '2px solid #e5e7eb', borderRadius: 12, fontSize: '1.05em', marginBottom: 14, outline: 'none' }}
+            />
+            <button
+              disabled={!player.trim()}
+              onClick={onStart}
+              style={{ width: '100%', padding: '14px 20px', background: '#6366f1', color: 'white', border: 'none', borderRadius: 12, fontSize: '1.1em', fontWeight: 700, cursor: player.trim() ? 'pointer' : 'not-allowed', opacity: player.trim() ? 1 : 0.5 }}
+            >
+              시작하기 ✏️
+            </button>
+          </div>
+        );
+      }
+
+      return children({ player, submit });
+    }
+
+    function App() {
+      return <GameShell>{({ player, submit }) => <Quiz player={player} submit={submit} />}</GameShell>;
+    }
+
+    // ───── 12달 데이터 ─────
+    const MONTHS = [
+      { id: 1,  ko: "1월",  en: "January" },
+      { id: 2,  ko: "2월",  en: "February" },
+      { id: 3,  ko: "3월",  en: "March" },
+      { id: 4,  ko: "4월",  en: "April" },
+      { id: 5,  ko: "5월",  en: "May" },
+      { id: 6,  ko: "6월",  en: "June" },
+      { id: 7,  ko: "7월",  en: "July" },
+      { id: 8,  ko: "8월",  en: "August" },
+      { id: 9,  ko: "9월",  en: "September" },
+      { id: 10, ko: "10월", en: "October" },
+      { id: 11, ko: "11월", en: "November" },
+      { id: 12, ko: "12월", en: "December" },
+    ];
+
+    function shuffleArr(arr) {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    // 정답 비교 — 대소문자 무관, 앞뒤 공백 제거
+    function isCorrect(input, answer) {
+      return input.trim().toLowerCase() === answer.toLowerCase();
+    }
+
+    // 첫 글자 + 글자 수 힌트 (예: "M___" for May)
+    function makeHint(answer) {
+      return answer[0] + '_'.repeat(answer.length - 1);
+    }
+
+    function Quiz({ player, submit }) {
+      const isMobile = useIsMobile();
+      const [quiz, setQuiz] = useState(() => shuffleArr(MONTHS));
+      const [idx, setIdx] = useState(0);
+      const [input, setInput] = useState('');
+      const [feedback, setFeedback] = useState(null); // 'ok' | 'wrong' | null
+      const [answers, setAnswers] = useState([]); // {month_ko, expected, given, ok, hint_used}
+      const [hintUsed, setHintUsed] = useState(false);
+      const [showAnswer, setShowAnswer] = useState(false);
+      const [phase, setPhase] = useState('play'); // 'play' | 'result'
+      const inputRef = useRef(null);
+
+      const current = quiz[idx];
+      const progress = `${idx + 1} / ${quiz.length}`;
+
+      // 새 문제 시 input 자동 포커스 + 한국어 발음 한 번
+      useEffect(() => {
+        if (phase !== 'play') return;
+        setInput('');
+        setFeedback(null);
+        setHintUsed(false);
+        setShowAnswer(false);
+        setTimeout(() => inputRef.current && inputRef.current.focus(), 80);
+        // 한국어 + 영어로 한 번 들려주기 (학습용 — 단 정답 노출이 너무 큼)
+        // → 한국어만 발음 (영어는 답이라 안 들려줌)
+        try { window.speechSynthesis.cancel(); } catch(e){}
+        if (current) window.GameTTS.speak(current.ko, 'ko-KR');
+      }, [idx, phase]);
+
+      function check() {
+        if (!input.trim()) return;
+        const ok = isCorrect(input, current.en);
+        const record = {
+          position: idx + 1,
+          month_ko: current.ko,
+          expected: current.en,
+          given: input.trim(),
+          ok,
+          hint_used: hintUsed,
+        };
+        if (ok) {
+          sfx.correct();
+          setFeedback('ok');
+          // 정답 발음 (학습)
+          setTimeout(() => window.GameTTS.speak(current.en, 'en-US'), 180);
+          setAnswers(a => [...a, record]);
+          setTimeout(() => goNext(), 1500);
+        } else {
+          sfx.wrong();
+          setFeedback('wrong');
+          setShowAnswer(true);
+          setAnswers(a => [...a, record]);
+          // 정답 발음 (학습 — 틀려도 들려줘서 익히기)
+          setTimeout(() => window.GameTTS.speak(current.en, 'en-US'), 180);
+          // 자동 다음으로 안 넘어감 — 사용자가 "다음" 버튼 눌러야
+        }
+      }
+
+      function goNext() {
+        if (idx + 1 >= quiz.length) {
+          setPhase('result');
+          finalize();
+        } else {
+          setIdx(i => i + 1);
+        }
+      }
+
+      function showHintAndContinue() {
+        setHintUsed(true);
+        sfx.click();
+      }
+
+      function finalize() {
+        sfx.finish();
+        const score = answers.filter(a => a.ok).length;
+        const total = quiz.length;
+        const hints = answers.filter(a => a.hint_used).length;
+        submit({
+          score, total,
+          answers,
+          meta: { hints_used: hints },
+        });
+      }
+
+      function playAgain() {
+        sfx.click();
+        setQuiz(shuffleArr(MONTHS));
+        setIdx(0);
+        setAnswers([]);
+        setPhase('play');
+      }
+
+      // 결과 화면
+      if (phase === 'result') {
+        const score = answers.filter(a => a.ok).length;
+        const total = quiz.length;
+        const wrong = answers.filter(a => !a.ok);
+        const allRight = score === total;
+        return (
+          <div style={{ maxWidth: 560, margin: '40px auto', padding: 28, background: 'white', borderRadius: 24, boxShadow: '0 20px 60px rgba(0,0,0,0.12)' }}>
+            <div style={{ textAlign: 'center', marginBottom: 18 }}>
+              <div style={{ fontSize: '4em', marginBottom: 6 }}>{allRight ? '🏆' : score >= total * 0.8 ? '🎉' : '📚'}</div>
+              <h2 style={{ fontSize: '1.8em', fontWeight: 800, marginBottom: 6 }}>
+                {allRight ? '완벽해요!' : score >= total * 0.8 ? '잘 했어요!' : '한 번 더 도전해봐요!'}
+              </h2>
+              <p style={{ color: '#64748b', marginBottom: 8 }}>{player} 님</p>
+              <div style={{ fontSize: '3em', fontWeight: 900, color: allRight ? '#10b981' : '#6366f1' }}>
+                {score} / {total}
+              </div>
+            </div>
+
+            {wrong.length > 0 && (
+              <div style={{ marginTop: 16, padding: 14, background: '#fef3c7', borderRadius: 14 }}>
+                <h3 style={{ fontSize: '1em', fontWeight: 700, marginBottom: 8, color: '#92400e' }}>다시 외워요</h3>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {wrong.map((w, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'white', borderRadius: 8, fontSize: '0.95em' }}>
+                      <span style={{ fontWeight: 700 }}>{w.month_ko}</span>
+                      <span style={{ color: '#991b1b' }}>{w.given || '비어있음'}</span>
+                      <span style={{ color: '#065f46', fontWeight: 700 }}>→ {w.expected}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button onClick={playAgain} style={btn(allRight ? '#10b981' : '#6366f1', '100%', 24)}>
+              다시 도전하기 🔁
+            </button>
+          </div>
+        );
+      }
+
+      // 플레이 화면
+      return (
+        <div style={{ maxWidth: 560, margin: '24px auto', padding: isMobile ? 14 : 24 }}>
+          {/* 진행도 + 헤더 */}
+          <div style={{ background: 'white', borderRadius: 16, padding: 14, boxShadow: '0 4px 14px rgba(0,0,0,0.06)', marginBottom: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.95em' }}>
+              <span style={{ color: '#64748b' }}>🙋 {player}</span>
+              <span style={{ fontWeight: 800, color: '#6366f1' }}>{progress}</span>
+            </div>
+            <div style={{ marginTop: 8, height: 6, background: '#e5e7eb', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ width: `${(idx / quiz.length) * 100}%`, height: '100%', background: '#6366f1', transition: 'width 0.3s' }} />
+            </div>
+          </div>
+
+          {/* 문제 카드 */}
+          <div className="pop" key={idx} style={{
+            background: 'white', borderRadius: 20, padding: isMobile ? 22 : 32,
+            boxShadow: '0 10px 30px rgba(0,0,0,0.08)', textAlign: 'center', marginBottom: 14,
+          }}>
+            <div style={{ fontSize: '0.95em', color: '#64748b', marginBottom: 6 }}>다음을 영어로 적어보세요</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 18 }}>
+              <div style={{ fontSize: isMobile ? '3em' : '4em', fontWeight: 900, color: '#1f2937', lineHeight: 1 }}>
+                {current.ko}
+              </div>
+              <button
+                onClick={() => { sfx.tap(); window.GameTTS.speak(current.ko, 'ko-KR'); }}
+                style={{ padding: 10, background: '#eef2ff', border: 'none', borderRadius: 12, cursor: 'pointer', fontSize: '1.4em' }}
+                aria-label="듣기"
+              >🔊</button>
+            </div>
+
+            {hintUsed && (
+              <div style={{ fontSize: '1.4em', fontFamily: 'ui-monospace, monospace', letterSpacing: '0.2em', color: '#f59e0b', marginBottom: 10, fontWeight: 800 }}>
+                {makeHint(current.en)}
+              </div>
+            )}
+
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  if (feedback === 'wrong') goNext();
+                  else if (feedback !== 'ok') check();
+                }
+              }}
+              placeholder="영어로 입력 (예: April)"
+              autoComplete="off"
+              autoCapitalize="words"
+              spellCheck={false}
+              disabled={feedback === 'ok'}
+              className={feedback === 'wrong' ? 'shake' : ''}
+              style={{
+                width: '100%', padding: '16px 20px',
+                border: '3px solid ' + (feedback === 'ok' ? '#10b981' : feedback === 'wrong' ? '#ef4444' : '#e5e7eb'),
+                background: feedback === 'ok' ? '#d1fae5' : feedback === 'wrong' ? '#fee2e2' : 'white',
+                borderRadius: 14, fontSize: '1.4em', textAlign: 'center', outline: 'none',
+                fontWeight: 700, color: '#1f2937',
+              }}
+            />
+
+            {feedback === 'ok' && (
+              <div style={{ marginTop: 12, color: '#065f46', fontWeight: 800, fontSize: '1.1em' }}>
+                ✅ 정답이에요! ({current.en})
+              </div>
+            )}
+            {feedback === 'wrong' && showAnswer && (
+              <div style={{ marginTop: 12, padding: 12, background: '#fef3c7', borderRadius: 12 }}>
+                <div style={{ color: '#991b1b', fontWeight: 700, marginBottom: 4 }}>❌ 정답은</div>
+                <div style={{ fontSize: '1.6em', fontWeight: 900, color: '#065f46' }}>{current.en}</div>
+              </div>
+            )}
+          </div>
+
+          {/* 액션 버튼 */}
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+            {feedback === null && !hintUsed && (
+              <button onClick={showHintAndContinue} style={btn('#f59e0b')}>💡 첫 글자 힌트</button>
+            )}
+            {feedback === null ? (
+              <button onClick={check} disabled={!input.trim()} style={btn(input.trim() ? '#6366f1' : '#94a3b8')}>
+                ✅ 정답 확인
+              </button>
+            ) : feedback === 'wrong' ? (
+              <button onClick={goNext} style={btn('#6366f1')}>
+                {idx + 1 >= quiz.length ? '결과 보기 →' : '다음 →'}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
+    function btn(color, width, marginTop) {
+      return {
+        padding: '14px 24px', fontSize: '1.05em', fontWeight: 800, color: 'white',
+        background: color, border: 'none', borderRadius: 14, cursor: 'pointer',
+        boxShadow: '0 6px 14px rgba(0,0,0,0.12)', minHeight: 54,
+        width: width || 'auto',
+        marginTop: marginTop || 0,
+      };
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
