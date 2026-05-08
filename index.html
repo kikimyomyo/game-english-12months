@@ -200,12 +200,43 @@
         const score = answers.filter(a => a.ok).length;
         const total = quiz.length;
         const hints = answers.filter(a => a.hint_used).length;
-        submit({
-          score, total,
-          answers,
-          meta: { hints_used: hints },
-        });
+        // 클라우드 시도 (mode: no-cors, 실패해도 무관)
+        submit({ score, total, answers, meta: { hints_used: hints } });
+        // 로컬 누적 저장
+        try {
+          const key = 'g8_english12_history';
+          const prev = JSON.parse(localStorage.getItem(key) || '[]');
+          prev.push({
+            ts: new Date().toISOString(),
+            player,
+            score, total,
+            hints_used: hints,
+            wrong: answers.filter(a => !a.ok).map(a => ({ q: a.month_ko, given: a.given, expected: a.expected })),
+          });
+          // 최근 50개만 보관
+          localStorage.setItem(key, JSON.stringify(prev.slice(-50)));
+        } catch (e) {}
       }
+
+      // 결과 화면에서 보여줄 통계
+      const stats = useMemo(() => {
+        try {
+          const all = JSON.parse(localStorage.getItem('g8_english12_history') || '[]');
+          const mine = all.filter(r => r.player === player);
+          if (!mine.length) return null;
+          const totalSum = mine.reduce((s, r) => s + r.total, 0);
+          const scoreSum = mine.reduce((s, r) => s + r.score, 0);
+          const best = Math.max(...mine.map(r => r.score));
+          const perfect = mine.filter(r => r.score === r.total).length;
+          return {
+            attempts: mine.length,
+            best,
+            perfect,
+            avg: scoreSum / mine.length,
+            avgPct: Math.round((scoreSum / totalSum) * 100),
+          };
+        } catch (e) { return null; }
+      }, [phase, player]);
 
       function playAgain() {
         sfx.click();
@@ -233,6 +264,20 @@
                 {score} / {total}
               </div>
             </div>
+
+            {stats && stats.attempts > 1 && (
+              <div style={{ marginTop: 8, marginBottom: 14, padding: 14, background: '#eef2ff', borderRadius: 14 }}>
+                <div style={{ fontSize: '0.85em', color: '#4338ca', fontWeight: 700, marginBottom: 8 }}>
+                  📊 {player} 님 누적 기록
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, fontSize: '0.95em' }}>
+                  <div>도전 횟수 <b>{stats.attempts}회</b></div>
+                  <div>최고 점수 <b>{stats.best}/{total}</b></div>
+                  <div>만점 <b>{stats.perfect}회</b></div>
+                  <div>평균 <b>{stats.avgPct}%</b></div>
+                </div>
+              </div>
+            )}
 
             {wrong.length > 0 && (
               <div style={{ marginTop: 16, padding: 14, background: '#fef3c7', borderRadius: 14 }}>
